@@ -73,6 +73,9 @@ uprint("Download hourly weather data of airports")
 hourly_data_dir = data_dir / Path("hourly_for_airport")
 hourly_data_dir.mkdir(exist_ok=True)
 for ap, st in tqdm(list(st_for_ap.items())):
-    hr = Hourly(st, start, end).fetch()
-    hr["airport"] = ap
-    hr.to_csv(hourly_data_dir / Path(f"{ap}.csv"))
+    csv_path = hourly_data_dir / Path(f"{ap}.csv")
+    if not csv_path.exists():
+        # TODO also check if the data actually contains the entire date range
+        hr = Hourly(st, start, end).fetch()
+        hr["airport"] = ap
+        hr.to_csv(csv_path)
