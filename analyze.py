@@ -47,6 +47,9 @@ def fix_time(row):
     minute = int(row["DepTime"] % 100)
     tzdb_id = airport_tz[row["Origin"]]["tz"]
 
+    if hour == 24:
+        hour = 0
+        flight_date_obj += timedelta(days=1)
     naive_dt = datetime.combine(flight_date_obj, time(hour, minute))
     localized_dt = naive_dt.replace(tzinfo=ZoneInfo(tzdb_id))
     return localized_dt.isoformat()
