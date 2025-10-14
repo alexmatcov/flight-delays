@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import airportsdata
 import dask.dataframe as dd
+from dask.diagnostics.progress import ProgressBar
 
 # %%
 # Load weather data
@@ -14,7 +15,6 @@ weather_files = glob.glob(f"{datadir}/hourly_for_airport/*.csv")
 dfs = [dd.read_csv(f) for f in weather_files]
 we = dd.concat(dfs, ignore_index=True)
 we["time"] = we["time"].astype("string")
-we[we["airport"] != "LBB"].head()
 we.head()
 
 # %%
@@ -146,8 +146,14 @@ fl_we = fl_we.drop(
     columns=["arr_time_airport", "arr_hour_airport", "arr_hour", "arr_airport"]
 )
 
+print("Performing joins...")
+with ProgressBar():
+    fl_we.compute()
+
 print(len(fl_we))
 fl_we.head()
 
 # %%
-fl_we.to_csv(f"{datadir}/weather_delay.csv", index=False)
+print("Saving merged data to CSV...")
+with ProgressBar():
+    fl_we.to_csv(f"{datadir}/weather_delay.csv", index=False)
