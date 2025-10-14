@@ -7,18 +7,18 @@ from zoneinfo import ZoneInfo
 import airportsdata
 import dask.dataframe as dd
 
+# %%
+# Load weather data
 datadir = "data"
 weather_files = glob.glob(f"{datadir}/hourly_for_airport/*.csv")
 dfs = [dd.read_csv(f) for f in weather_files]
-
-# %%
 we = dd.concat(dfs, ignore_index=True)
-
 we["time"] = we["time"].astype("string")
 we[we["airport"] != "LBB"].head()
 we.head()
 
 # %%
+# Load flight data
 fl = dd.read_csv(
     f"{datadir}/flight_data_2018_2024.csv",
     dtype={
@@ -33,6 +33,8 @@ fl = dd.read_csv(
         "Originally_Scheduled_Code_Share_Airline": "str",
     },
 )  # dask guesses the dtype wrong
+
+# Filter interesting flights
 fl = fl[fl["Cancelled"] == False]  # type: ignore
 fl = fl[fl["ActualElapsedTime"].notnull()]
 fl = fl[
@@ -46,6 +48,8 @@ fl = fl[
         "ArrDelayMinutes",
     ]
 ]
+
+# Fix time data
 airport_tz = airportsdata.load("IATA")
 
 
@@ -84,10 +88,10 @@ fl = fl[
 fl.head(10)
 
 # %%
-# Combine data with weather station reading for dep and arr hour
+# Combine flight data with weather station reading for dep and arr hour
 
 
-def nearest_hour_weather(col: str):
+def nearest_hour_weather_time(col: str):
     """Returns function to convert the column
     into the nearest hour in the weather data time string format,
     UTC `YYYY-MM-DD HH:MM:SS`"""
@@ -107,21 +111,43 @@ def nearest_hour_weather(col: str):
     return f
 
 
-fl["dep_hour"] = fl.apply(nearest_hour_weather("dep"), axis=1, meta=("dep_hour", "str"))
-fl["arr_hour"] = fl.apply(nearest_hour_weather("arr"), axis=1, meta=("arr_hour", "str"))
+# Calculate nearest hour in the weather data string format for both
+fl["dep_hour"] = fl.apply(
+    nearest_hour_weather_time("dep"), axis=1, meta=("dep_hour", "str")
+)
+fl["arr_hour"] = fl.apply(
+    nearest_hour_weather_time("arr"), axis=1, meta=("arr_hour", "str")
+)
 
-fl.head()
 
-# %%
+# Create single common column to merge on
 we["time_airport"] = we["time"] + " " + we["airport"].astype("string")
-print(we.head())
 fl["dep_hour_airport"] = fl["dep_hour"] + " " + fl["Origin"].astype("string")
-fl.head()
+fl["arr_hour_airport"] = fl["arr_hour"] + " " + fl["Dest"].astype("string")
 
-# %%
-fl_we = fl.merge(we, left_on="dep_hour_airport", right_on="time_airport", how="left")
+
+# Perform merge
+fl_we = fl.merge(
+    we.rename(columns=lambda x: "dep_" + x),
+    left_on="dep_hour_airport",
+    right_on="dep_time_airport",
+    how="inner",
+)
+fl_we = fl_we.drop(
+    columns=["dep_time_airport", "dep_hour_airport", "dep_hour", "dep_airport"]
+)
+fl_we = fl_we.merge(
+    we.rename(columns=lambda x: "arr_" + x),
+    left_on="arr_hour_airport",
+    right_on="arr_time_airport",
+    how="inner",
+)
+fl_we = fl_we.drop(
+    columns=["arr_time_airport", "arr_hour_airport", "arr_hour", "arr_airport"]
+)
+
 print(len(fl_we))
-fl_we.head(10)
+fl_we.head()
 
 # %%
-fl_we.to_csv(f"{datadir}/weather_delay.csv")
+fl_we.to_csv(f"{datadir}/weather_delay.csv", index=False)
