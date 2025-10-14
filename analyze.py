@@ -1,6 +1,6 @@
 # %%
 
-
+import glob
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -8,26 +8,34 @@ import airportsdata
 import dask.dataframe as dd
 
 datadir = "data"
+weather_files = glob.glob(f"{datadir}/hourly_for_airport/*.csv")
+dfs = [dd.read_csv(f) for f in weather_files]
 
-weather = dd.read_csv(f"{datadir}/hourly_for_airport/*.csv")
-print(f"Loaded weather data with shape: {weather.shape}")
-print(f"Number of rows: {weather.shape[0]}")
-print(f"Columns: {list(weather.columns)}")
-weather.head()
 # %%
-flights_all = dd.read_csv(
+we = dd.concat(dfs, ignore_index=True)
+
+we["time"] = we["time"].astype("string")
+we[we["airport"] != "LBB"].head()
+we.head()
+
+# %%
+fl = dd.read_csv(
     f"{datadir}/flight_data_2018_2024.csv",
     dtype={
         "Div1Airport": "str",
         "Div1TailNum": "str",
         "Div2Airport": "str",
         "Div2TailNum": "str",
+        "Div3Airport": "str",
+        "Div3TailNum": "str",
+        "CancellationCode": "str",
         "IATA_Code_Originally_Scheduled_Code_Share_Airline": "str",
         "Originally_Scheduled_Code_Share_Airline": "str",
     },
 )  # dask guesses the dtype wrong
-flights_raw = flights_all[flights_all["Cancelled"] == False]  # type: ignore
-flights_raw = flights_raw[
+fl = fl[fl["Cancelled"] == False]  # type: ignore
+fl = fl[fl["ActualElapsedTime"].notnull()]
+fl = fl[
     [
         "FlightDate",
         "DepTime",
@@ -55,15 +63,15 @@ def fix_time(row):
     return localized_dt.isoformat()
 
 
-flights_raw["dep"] = flights_raw.apply(fix_time, axis=1, meta=("dep", "str"))
-flights_raw["arr"] = flights_raw.apply(
+fl["dep"] = fl.apply(fix_time, axis=1, meta=("dep", "str"))
+fl["arr"] = fl.apply(
     lambda r: (
         datetime.fromisoformat(r["dep"]) + timedelta(minutes=r["ActualElapsedTime"])
     ).isoformat(),
     axis=1,
     meta=("arr", "str"),
 )
-flights = flights_raw[
+fl = fl[
     [
         "Origin",
         "dep",
@@ -73,4 +81,47 @@ flights = flights_raw[
         "ArrDelayMinutes",
     ]
 ]
-flights.head(10)
+fl.head(10)
+
+# %%
+# Combine data with weather station reading for dep and arr hour
+
+
+def nearest_hour_weather(col: str):
+    """Returns function to convert the column
+    into the nearest hour in the weather data time string format,
+    UTC `YYYY-MM-DD HH:MM:SS`"""
+
+    def f(row) -> str:
+        d = datetime.fromisoformat(row[col])
+        # Round to nearest hour
+        if d.minute >= 30:
+            d = d.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            d = d.replace(minute=0, second=0, microsecond=0)
+
+        d_utc = d.utctimetuple()
+
+        return datetime(*d_utc[:6]).strftime("%Y-%m-%d %H:%M:%S")
+
+    return f
+
+
+fl["dep_hour"] = fl.apply(nearest_hour_weather("dep"), axis=1, meta=("dep_hour", "str"))
+fl["arr_hour"] = fl.apply(nearest_hour_weather("arr"), axis=1, meta=("arr_hour", "str"))
+
+fl.head()
+
+# %%
+we["time_airport"] = we["time"] + " " + we["airport"].astype("string")
+print(we.head())
+fl["dep_hour_airport"] = fl["dep_hour"] + " " + fl["Origin"].astype("string")
+fl.head()
+
+# %%
+fl_we = fl.merge(we, left_on="dep_hour_airport", right_on="time_airport", how="left")
+print(len(fl_we))
+fl_we.head(10)
+
+# %%
+fl_we.to_csv(f"{datadir}/weather_delay.csv")
