@@ -1,0 +1,16 @@
+[project]
+name = "flight-delays"
+version = "0.1.0"
+description = "Download and analyze flight delay and weather data"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "airportsdata>=20250909",
+    "dask>=2025.9.1",
+    "ipykernel>=6.30.1",
+    "meteostat>=1.7.4",
+    "pandas>=2.3.2",
+    "pandas-stubs>=2.0.0",
+    "pyarrow>=21.0.0",
+    "tqdm>=4.67.1",
+]

@@ -13,3 +13,39 @@ curl -L -o data/flight-delay-dataset-2018-2024.zip\
   https://www.kaggle.com/api/v1/datasets/download/shubhamsingh42/flight-delay-dataset-2018-2024
 unzip data/flight-delay-dataset-2018-2024.zip -d data
 ```
+
+To fetch the weather data (hourly weather patterns for each airport location), run:
+
+```shell
+uv run fetch-weather.py
+```
+
+This can take a long time to execute.
+
+## Processing
+
+`analyze.py` takes the available data and creates a dataset from it that could be well suited for training an ML model,
+particularly to predict flight delays based on weather readings.
+
+Run it with:
+
+```shell
+uv run analyze.py
+```
+
+The data produced will be in multiple parts in the `data` subdirectory, under `data/weather_delay.csv`. The format is as follows:
+
+| Field                                          | Description                    |
+| ---------------------------------------------- | ------------------------------ |
+| Origin, Dest, DepDelayMinutes, ArrDelayMinutes | See Flight Delays              |
+| dep                                            | Departure time ISO 8601        |
+| arr                                            | Arrival time ISO 8601          |
+| dep\_\* (multiple fields)                      | Departure weather, see Weather |
+| arr\_\* (multiple fields)                      | Arrival weather, see Weather   |
+
+## Data Structure
+
+| Dataset       | Structure docs                                                                                                 |
+| ------------- | -------------------------------------------------------------------------------------------------------------- |
+| Flight Delays | [TranStats data on Kaggle](https://www.kaggle.com/datasets/shubhamsingh42/flight-delay-dataset-2018-2024/data) |
+| Weather       | [Meteostat Docs](https://dev.meteostat.net/python/hourly.html#data-structure)                                  |
