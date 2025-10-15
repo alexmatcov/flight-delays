@@ -8,31 +8,40 @@ import airportsdata
 import dask.dataframe as dd
 from dask.diagnostics.progress import ProgressBar
 
+from storage import config
+
 # %%
 # Load weather data
-datadir = "data"
-weather_files = glob.glob(f"{datadir}/hourly_for_airport/*.csv")
-dfs = [dd.read_csv(f) for f in weather_files]
-we = dd.concat(dfs, ignore_index=True)
+try:
+    weather_path = config.get_s3_path(f"{config.processed_path}/weather_combined.parquet")
+    we = dd.read_parquet(weather_path, storage_options=config.s3fs_storage_options)
+except:
+    weather_path = config.get_s3_path(f"{config.raw_weather_path}/*.csv")
+    we = dd.read_csv(weather_path, storage_options=config.s3fs_storage_options, assume_missing=True)
+
 we["time"] = we["time"].astype("string")
 we.head()
 
 # %%
 # Load flight data
-fl = dd.read_csv(
-    f"{datadir}/flight_data_2018_2024.csv",
-    dtype={
-        "Div1Airport": "str",
-        "Div1TailNum": "str",
-        "Div2Airport": "str",
-        "Div2TailNum": "str",
-        "Div3Airport": "str",
-        "Div3TailNum": "str",
-        "CancellationCode": "str",
-        "IATA_Code_Originally_Scheduled_Code_Share_Airline": "str",
-        "Originally_Scheduled_Code_Share_Airline": "str",
-    },
-)  # dask guesses the dtype wrong
+dtype_spec = {
+    "Div1Airport": "str",
+    "Div1TailNum": "str",
+    "Div2Airport": "str",
+    "Div2TailNum": "str",
+    "Div3Airport": "str",
+    "Div3TailNum": "str",
+    "CancellationCode": "str",
+    "IATA_Code_Originally_Scheduled_Code_Share_Airline": "str",
+    "Originally_Scheduled_Code_Share_Airline": "str",
+}
+
+try:
+    flight_path = config.get_s3_path(f"{config.processed_path}/flight_data.parquet")
+    fl = dd.read_parquet(flight_path, storage_options=config.s3fs_storage_options)
+except:
+    flight_path = config.get_s3_path(f"{config.raw_flights_path}/flight_data_2018_2024.csv")
+    fl = dd.read_csv(flight_path, dtype=dtype_spec, storage_options=config.s3fs_storage_options, assume_missing=True)
 
 # Filter interesting flights
 fl = fl[fl["Cancelled"] == False]  # type: ignore
@@ -154,6 +163,12 @@ print(len(fl_we))
 fl_we.head()
 
 # %%
-print("Saving merged data to CSV...")
+output_path = config.get_s3_path(f"{config.processed_path}/weather_delay_merged.parquet")
+print(f"Saving to {output_path}")
 with ProgressBar():
-    fl_we.to_csv(f"{datadir}/weather_delay.csv", index=False)
+    fl_we.to_parquet(
+        output_path,
+        storage_options=config.s3fs_storage_options,
+        engine='pyarrow',
+        compression='snappy'
+    )
