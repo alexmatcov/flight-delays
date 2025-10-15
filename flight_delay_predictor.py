@@ -146,6 +146,100 @@ y = df_processed["ArrDelayMinutes"].copy()
 
 print(f"Features: {len(feature_columns)}, Samples: {len(X)}")
 
+
+# %%
+def display_correlation_matrix(
+    X_data, y_data, feature_names=None, title="Feature Correlation Matrix"
+):
+    """Display correlation matrix for features and target variable."""
+    if feature_names is None:
+        feature_names = X_data.columns.tolist()
+
+    # Combine features with target for full correlation analysis
+    correlation_data = X_data.copy()
+    correlation_data["ArrDelayMinutes"] = y_data
+
+    # Calculate correlation matrix
+    corr_matrix = correlation_data.corr()
+
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+
+    # Full correlation matrix
+    mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+    sns.heatmap(
+        corr_matrix,
+        mask=mask,
+        annot=True,
+        cmap="coolwarm",
+        center=0,
+        square=True,
+        linewidths=0.5,
+        cbar_kws={"shrink": 0.8},
+        ax=ax1,
+        fmt=".2f",
+    )
+    ax1.set_title(f"{title} - Full Matrix")
+    ax1.tick_params(axis="x", rotation=45)
+    ax1.tick_params(axis="y", rotation=0)
+
+    # Correlation with target variable (sorted)
+    target_corr = (
+        corr_matrix["ArrDelayMinutes"]
+        .drop("ArrDelayMinutes")
+        .sort_values(key=abs, ascending=False)
+    )
+
+    colors = ["red" if x < 0 else "blue" for x in target_corr.values]
+    bars = ax2.barh(
+        range(len(target_corr)), target_corr.values, color=colors, alpha=0.7
+    )
+    ax2.set_yticks(range(len(target_corr)))
+    ax2.set_yticklabels(target_corr.index, fontsize=9)
+    ax2.set_xlabel("Correlation with Delay Minutes")
+    ax2.set_title("Feature Correlations with Flight Delays")
+    ax2.axvline(x=0, color="black", linestyle="-", alpha=0.3)
+    ax2.grid(axis="x", alpha=0.3)
+
+    # Add correlation values on bars
+    for i, (bar, val) in enumerate(zip(bars, target_corr.values)):
+        ax2.text(
+            val + (0.01 if val >= 0 else -0.01),
+            i,
+            f"{val:.3f}",
+            va="center",
+            ha="left" if val >= 0 else "right",
+            fontsize=8,
+        )
+
+    plt.tight_layout()
+    show_or_save_plot("correlation_matrix.png")
+
+    # Print top correlations
+    print("\nTop 10 Features Correlated with Flight Delays:")
+    print("=" * 50)
+    for feature, corr_val in target_corr.head(10).items():
+        direction = "↑" if corr_val > 0 else "↓"
+        print(f"{feature:25s} {direction} {corr_val:6.3f}")
+
+    print("\nCorrelation Summary:")
+    print(
+        f"Strongest positive correlation: {target_corr.max():.3f} ({target_corr.idxmax()})"
+    )
+    print(
+        f"Strongest negative correlation: {target_corr.min():.3f} ({target_corr.idxmin()})"
+    )
+
+    return corr_matrix
+
+
+# Display correlation matrix for all features
+print("\n" + "=" * 60)
+print("FEATURE CORRELATION ANALYSIS")
+print("=" * 60)
+
+correlation_matrix = display_correlation_matrix(X, y, feature_columns)
+
 # %%
 non_null_cols = X.columns[X.notna().any()].tolist()
 X_filtered = X[non_null_cols].copy()
