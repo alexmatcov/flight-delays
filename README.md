@@ -22,9 +22,29 @@ uv run fetch-weather.py
 
 This can take a long time to execute.
 
+## Storage
+
+This project uses MinIO for S3-compatible object storage.
+
+```shell
+# Start MinIO
+docker-compose up -d
+
+# Initialize storage structure
+uv run storage.py
+
+# Upload local data to MinIO
+uv run upload_raw_data.py
+
+# Download MinIO data locally
+uv run donwload_data.py
+```
+
+MinIO console: http://localhost:9001 (user: admin / passwrod: very-intensive-data)
+
 ## Processing
 
-`analyze.py` takes the available data and creates a dataset from it that could be well suited for training an ML model,
+`analyze.py` processed data from MinIO and creates a merged dataset from it that could be well suited for training an ML model,
 particularly to predict flight delays based on weather readings.
 
 Run it with:
