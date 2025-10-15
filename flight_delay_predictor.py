@@ -67,6 +67,9 @@ print(f"Device: {device}")
 # Configuration - set your data directory here
 data_dir = "data"  # Use "data" for full dataset or "data/sample" for sample data
 
+# Dataset sampling for faster training/testing (set to 1.0 for full dataset)
+DATASET_SAMPLE_FRACTION = 0.10  # Use 10% of data by default
+
 # Load the processed weather and delay data
 csv_files = glob.glob(f"{data_dir}/weather_delay.csv/*.part")
 
@@ -76,6 +79,15 @@ for file in csv_files:
     dfs.append(df)
 
 df = pd.concat(dfs, ignore_index=True)
+
+# Sample dataset if requested
+if DATASET_SAMPLE_FRACTION < 1.0:
+    original_size = len(df)
+    df = df.sample(frac=DATASET_SAMPLE_FRACTION, random_state=42).reset_index(drop=True)
+    print(
+        f"Sampled {DATASET_SAMPLE_FRACTION * 100:.1f}% of dataset: {len(df):,} rows (from {original_size:,})"
+    )
+
 print(f"Dataset shape: {df.shape}")
 print(f"Columns: {df.columns.tolist()}")
 df.head()
@@ -197,44 +209,37 @@ print(f"Test tensors: X={X_test_tensor.shape}, y={y_test_tensor.shape}")
 # %%
 # Define Neural Network Architecture
 class FlightDelayPredictor(nn.Module):
-    def __init__(self, input_dim, hidden_dims=[128, 64, 32], dropout_rate=0.2):
+    def __init__(self, input_dim, hidden_dims=[128, 64, 32], dropout_rate=0.3):
         super(FlightDelayPredictor, self).__init__()
 
         layers = []
         prev_dim = input_dim
 
+        # Hidden layers with stronger regularization
         for i, hidden_dim in enumerate(hidden_dims):
             layers.extend(
                 [
                     nn.Linear(prev_dim, hidden_dim),
                     nn.BatchNorm1d(hidden_dim),
-                    nn.LeakyReLU(0.1),
-                    nn.Dropout(
-                        dropout_rate if i < len(hidden_dims) - 1 else dropout_rate * 0.5
-                    ),
+                    nn.ReLU(),
+                    nn.Dropout(dropout_rate),
                 ]
             )
             prev_dim = hidden_dim
 
-        # Output layer with smaller final hidden layer
-        layers.extend(
-            [
-                nn.Linear(prev_dim, 16),
-                nn.LeakyReLU(0.1),
-                nn.Dropout(0.1),
-                nn.Linear(16, 1),
-            ]
-        )
+        # Output layer
+        layers.append(nn.Linear(prev_dim, 1))
 
         self.network = nn.Sequential(*layers)
 
-        # Initialize weights with better scheme for regression
+        # Better initialization for regression
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
-            torch.nn.init.kaiming_uniform_(module.weight, nonlinearity="leaky_relu")
-            torch.nn.init.zeros_(module.bias)
+            torch.nn.init.xavier_normal_(module.weight)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
 
     def forward(self, x):
         return self.network(x)
@@ -252,7 +257,7 @@ print(f"\nTotal parameters: {sum(p.numel() for p in model.parameters()):,}")
 # %%
 # Training Configuration
 class EarlyStopping:
-    def __init__(self, patience=10, min_delta=0.001):
+    def __init__(self, patience=50, min_delta=0.0001):
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
@@ -268,9 +273,9 @@ class EarlyStopping:
             return self.counter >= self.patience
 
 
-# Training hyperparameters - optimized for smaller dataset
-batch_size = 64
-learning_rate = 0.0005
+# Training hyperparameters - reduced overfitting
+batch_size = 256
+learning_rate = 0.001
 num_epochs = 300
 
 # Create data loaders
@@ -280,15 +285,15 @@ train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-# Loss function and optimizer with better settings for regression
-criterion = nn.HuberLoss(delta=10.0)  # More robust to outliers than MSE
-optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+# Loss function and optimizer with better regularization
+criterion = nn.MSELoss()
+optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-3)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode="min", factor=0.7, patience=8, min_lr=1e-6
+    optimizer, mode="min", factor=0.5, patience=10, min_lr=1e-6
 )
 
-# Early stopping with more patience for smaller dataset
-early_stopping = EarlyStopping(patience=25, min_delta=0.01)
+# Early stopping with more patience
+early_stopping = EarlyStopping(patience=25, min_delta=1.0)
 
 print("Training configuration:")
 print(f"  Batch size: {batch_size}")
@@ -625,7 +630,7 @@ torch.save(
         "model_architecture": {
             "input_dim": input_dim,
             "hidden_dims": [128, 64, 32],
-            "dropout_rate": 0.2,
+            "dropout_rate": 0.3,
         },
         "feature_columns": feature_columns,
         "training_stats": {
