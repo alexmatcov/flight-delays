@@ -19,6 +19,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 
@@ -307,12 +308,19 @@ def train_model():
     best_val_loss = float("inf")
     best_model_state = None
 
-    for epoch in range(num_epochs):
+    # Progress bar for epochs
+    epoch_pbar = tqdm(range(num_epochs), desc="Training", unit="epoch")
+
+    for epoch in epoch_pbar:
         # Training phase
         model.train()
         train_loss = 0.0
 
-        for batch_X, batch_y in train_loader:
+        # Progress bar for training batches
+        train_pbar = tqdm(
+            train_loader, desc=f"Epoch {epoch + 1} Train", leave=False, unit="batch"
+        )
+        for batch_X, batch_y in train_pbar:
             optimizer.zero_grad()
             outputs = model(batch_X)
             loss = criterion(outputs, batch_y)
@@ -324,6 +332,9 @@ def train_model():
             optimizer.step()
             train_loss += loss.item()
 
+            # Update progress bar
+            train_pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+
         avg_train_loss = train_loss / len(train_loader)
 
         # Validation phase
@@ -331,10 +342,17 @@ def train_model():
         val_loss = 0.0
 
         with torch.no_grad():
-            for batch_X, batch_y in test_loader:
+            # Progress bar for validation batches
+            val_pbar = tqdm(
+                test_loader, desc=f"Epoch {epoch + 1} Val", leave=False, unit="batch"
+            )
+            for batch_X, batch_y in val_pbar:
                 outputs = model(batch_X)
                 loss = criterion(outputs, batch_y)
                 val_loss += loss.item()
+
+                # Update progress bar
+                val_pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
         avg_val_loss = val_loss / len(test_loader)
 
@@ -349,19 +367,19 @@ def train_model():
             best_val_loss = avg_val_loss
             best_model_state = model.state_dict().copy()
 
-        # Print progress
-        if (epoch + 1) % 10 == 0:
-            current_lr = optimizer.param_groups[0]["lr"]
-            print(
-                f"Epoch [{epoch + 1}/{num_epochs}], "
-                f"Train Loss: {avg_train_loss:.4f}, "
-                f"Val Loss: {avg_val_loss:.4f}, "
-                f"LR: {current_lr:.6f}"
-            )
+        # Update epoch progress bar
+        current_lr = optimizer.param_groups[0]["lr"]
+        epoch_pbar.set_postfix(
+            {
+                "train_loss": f"{avg_train_loss:.4f}",
+                "val_loss": f"{avg_val_loss:.4f}",
+                "lr": f"{current_lr:.6f}",
+            }
+        )
 
         # Early stopping
         if early_stopping(avg_val_loss):
-            print(f"Early stopping at epoch {epoch + 1}")
+            epoch_pbar.set_description(f"Early stopping at epoch {epoch + 1}")
             break
 
     # Load best model
@@ -491,7 +509,15 @@ def calculate_feature_importance(model, X_tensor, y_tensor, feature_names):
 
     importances = []
 
-    for i, feature_name in enumerate(feature_names):
+    # Progress bar for feature importance calculation
+    feature_pbar = tqdm(
+        enumerate(feature_names),
+        total=len(feature_names),
+        desc="Calculating feature importance",
+        unit="feature",
+    )
+
+    for i, feature_name in feature_pbar:
         # Create permuted version
         X_permuted = X_tensor.clone()
         perm_idx = torch.randperm(X_permuted.shape[0])
@@ -507,6 +533,9 @@ def calculate_feature_importance(model, X_tensor, y_tensor, feature_names):
         # Feature importance is the increase in error
         importance = permuted_mae - baseline_mae
         importances.append(importance)
+
+        # Update progress bar
+        feature_pbar.set_postfix({"current_feature": feature_name[:10]})
 
     return np.array(importances)
 
