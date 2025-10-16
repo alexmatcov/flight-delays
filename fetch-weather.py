@@ -8,6 +8,8 @@ import pandas as pd
 from meteostat import Hourly, Stations
 from tqdm import tqdm
 
+from storage import config
+
 
 def uprint(
     *values: object,
@@ -68,14 +70,14 @@ for ap_t in tqdm(ap_cds.iterrows(), total=len(ap_cds)):
     st_for_ap[iata] = meteostat_id
 
 st_for_ap  # type: ignore
+
 # %%
+# Download hourly weather data and save to MinIO
 uprint("Download hourly weather data of airports")
-hourly_data_dir = data_dir / Path("hourly_for_airport")
-hourly_data_dir.mkdir(exist_ok=True)
 for ap, st in tqdm(list(st_for_ap.items())):
-    csv_path = hourly_data_dir / Path(f"{ap}.csv")
-    if not csv_path.exists():
-        # TODO also check if the data actually contains the entire date range
-        hr = Hourly(st, start, end).fetch()
-        hr["airport"] = ap
-        hr.to_csv(csv_path)
+    s3_path = config.get_s3_path(f"{config.raw_weather_path}/{ap}.csv")
+    
+    # TODO: check if file exists in MinIO before downloading
+    hr = Hourly(st, start, end).fetch()
+    hr["airport"] = ap
+    hr.to_csv(s3_path, storage_options=config.s3fs_storage_options, index=True)
