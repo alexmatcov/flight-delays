@@ -2,7 +2,6 @@
 
 import sys
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 from meteostat import Hourly, Stations
@@ -23,15 +22,17 @@ def uprint(
         print(*values, sep=sep, end=end, file=file, flush=flush)
 
 
-data_dir = Path("data")
-airports_csv = data_dir / Path("airports.csv")
 airports_csv_url = "https://davidmegginson.github.io/ourairports-data/airports.csv"
+airports_s3_path = config.get_s3_path(f"{config.raw_airports_path}/airports.csv")
 
+# Try to read from MinIO first, otherwise download from source
 try:
-    ap_cds = pd.read_csv(airports_csv)
-except FileNotFoundError:
+    ap_cds = pd.read_csv(airports_s3_path, storage_options=config.s3fs_storage_options)
+    uprint("Loaded airports from MinIO")
+except:
     ap_cds = pd.read_csv(airports_csv_url)
-    ap_cds.to_csv(airports_csv, index=False)
+    ap_cds.to_csv(airports_s3_path, storage_options=config.s3fs_storage_options, index=False)
+    uprint("Downloaded and saved airports to MinIO")
 
 ap_cds = ap_cds[["type", "iso_country", "latitude_deg", "longitude_deg", "iata_code"]]
 ap_cds.head()
