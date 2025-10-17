@@ -33,27 +33,33 @@ docker-compose up -d
 # Initialize storage structure
 uv run storage.py
 
-# Upload local data to MinIO
-uv run upload_raw_data.py
-
-# Download MinIO data locally
-uv run download_data.py
+# Upload fetched local data to MinIO
+uv run upload_data.py
 ```
 
 MinIO console: http://localhost:9001 (user: admin / password: very-intensive-data)
 
+### Pipeline Architecture
+![alt text](images/architecture.png)
+
 ## Processing
 
-`analyze.py` processes data from MinIO and creates a merged dataset from it that could be well suited for training an ML model,
-particularly to predict flight delays based on weather readings.
+The pipeline processes data entirely through MinIO:
+
+1. Data merging: `analyze.py` merges flight data with weather at departure/arrival times
+2. Model training: `flight_delay_predictor.py` trains a neural network to predict delays
 
 Run it with:
 
 ```shell
+# Merge flights with weather
 uv run analyze.py
+
+# Train prediction model
+uv run flight_delay_predictor.py
 ```
 
-The data produced will be in multiple parts in the `data` subdirectory, under `data/weather_delay.csv`. The format is as follows:
+All processed data and results are stored in MinIO at `s3://flight-delays/processed/` and `s3://flight-delays/results/`.
 
 | Field                                          | Description                    |
 | ---------------------------------------------- | ------------------------------ |
