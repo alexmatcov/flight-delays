@@ -2,11 +2,12 @@
 
 import sys
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 from meteostat import Hourly, Stations
 from tqdm import tqdm
+
+from storage import config
 
 
 def uprint(
@@ -21,15 +22,17 @@ def uprint(
         print(*values, sep=sep, end=end, file=file, flush=flush)
 
 
-data_dir = Path("data")
-airports_csv = data_dir / Path("airports.csv")
 airports_csv_url = "https://davidmegginson.github.io/ourairports-data/airports.csv"
+airports_s3_path = config.get_s3_path(f"{config.raw_airports_path}/airports.csv")
 
+# Try to read from MinIO first, otherwise download from source
 try:
-    ap_cds = pd.read_csv(airports_csv)
-except FileNotFoundError:
+    ap_cds = pd.read_csv(airports_s3_path, storage_options=config.s3fs_storage_options)
+    uprint("Loaded airports from MinIO")
+except:
     ap_cds = pd.read_csv(airports_csv_url)
-    ap_cds.to_csv(airports_csv, index=False)
+    ap_cds.to_csv(airports_s3_path, storage_options=config.s3fs_storage_options, index=False)
+    uprint("Downloaded and saved airports to MinIO")
 
 ap_cds = ap_cds[["type", "iso_country", "latitude_deg", "longitude_deg", "iata_code"]]
 ap_cds.head()
@@ -68,14 +71,14 @@ for ap_t in tqdm(ap_cds.iterrows(), total=len(ap_cds)):
     st_for_ap[iata] = meteostat_id
 
 st_for_ap  # type: ignore
+
 # %%
+# Download hourly weather data and save to MinIO
 uprint("Download hourly weather data of airports")
-hourly_data_dir = data_dir / Path("hourly_for_airport")
-hourly_data_dir.mkdir(exist_ok=True)
 for ap, st in tqdm(list(st_for_ap.items())):
-    csv_path = hourly_data_dir / Path(f"{ap}.csv")
-    if not csv_path.exists():
-        # TODO also check if the data actually contains the entire date range
-        hr = Hourly(st, start, end).fetch()
-        hr["airport"] = ap
-        hr.to_csv(csv_path)
+    s3_path = config.get_s3_path(f"{config.raw_weather_path}/{ap}.csv")
+    
+    # TODO: check if file exists in MinIO before downloading
+    hr = Hourly(st, start, end).fetch()
+    hr["airport"] = ap
+    hr.to_csv(s3_path, storage_options=config.s3fs_storage_options, index=True)

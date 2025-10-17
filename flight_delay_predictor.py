@@ -1,5 +1,5 @@
 # %%
-import glob
+import io
 import os
 import sys
 import warnings
@@ -21,6 +21,8 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
+from storage import config, Storage
+
 warnings.filterwarnings("ignore")
 
 INTERACTIVE_MODE = (
@@ -40,25 +42,31 @@ def get_device():
         return torch.device("cpu")
 
 
+storage = Storage()
+
+
 def show_or_save_plot(filename=None):
     if INTERACTIVE_MODE:
         plt.show()
     else:
         if filename:
-            os.makedirs(f"{data_dir}/plots", exist_ok=True)
-            plt.savefig(f"{data_dir}/plots/{filename}", dpi=300, bbox_inches="tight")
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=300, bbox_inches="tight")
+            buf.seek(0)
+            
+            s3_key = f"{config.results_path}/plots/{filename}"
+            storage.s3.upload_fileobj(buf, config.bucket_name, s3_key)
+            print(f"Saved plot to s3://{config.bucket_name}/{s3_key}")
         plt.close()
 
 
 device = get_device()
 
 # %%
-data_dir = "data"
 DATASET_SAMPLE_FRACTION = 0.10
 
-csv_files = glob.glob(f"{data_dir}/weather_delay.csv/*.part")
-dfs = [pd.read_csv(file) for file in csv_files]
-df = pd.concat(dfs, ignore_index=True)
+data_path = config.get_s3_path(f"{config.processed_path}/weather_delay_merged.parquet")
+df = pd.read_parquet(data_path, storage_options=config.s3fs_storage_options)
 
 if DATASET_SAMPLE_FRACTION < 1.0:
     original_size = len(df)
@@ -155,79 +163,32 @@ def display_correlation_matrix(
     if feature_names is None:
         feature_names = X_data.columns.tolist()
 
-    # Combine features with target for full correlation analysis
-    correlation_data = X_data.copy()
-    correlation_data["ArrDelayMinutes"] = y_data
+    corr_data = X_data.copy()
+    corr_data["target"] = y_data
 
-    # Calculate correlation matrix
-    corr_matrix = correlation_data.corr()
+    corr_matrix = corr_data.corr()
 
-    # Create figure with two subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
-
-    # Full correlation matrix
-    mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+    plt.figure(figsize=(16, 14))
     sns.heatmap(
         corr_matrix,
-        mask=mask,
-        annot=True,
         cmap="coolwarm",
         center=0,
+        annot=False,
+        fmt=".2f",
         square=True,
         linewidths=0.5,
         cbar_kws={"shrink": 0.8},
-        ax=ax1,
-        fmt=".2f",
     )
-    ax1.set_title(f"{title} - Full Matrix")
-    ax1.tick_params(axis="x", rotation=45)
-    ax1.tick_params(axis="y", rotation=0)
-
-    # Correlation with target variable (sorted)
-    target_corr = (
-        corr_matrix["ArrDelayMinutes"]
-        .drop("ArrDelayMinutes")
-        .sort_values(key=abs, ascending=False)
-    )
-
-    colors = ["red" if x < 0 else "blue" for x in target_corr.values]
-    bars = ax2.barh(
-        range(len(target_corr)), target_corr.values, color=colors, alpha=0.7
-    )
-    ax2.set_yticks(range(len(target_corr)))
-    ax2.set_yticklabels(target_corr.index, fontsize=9)
-    ax2.set_xlabel("Correlation with Delay Minutes")
-    ax2.set_title("Feature Correlations with Flight Delays")
-    ax2.axvline(x=0, color="black", linestyle="-", alpha=0.3)
-    ax2.grid(axis="x", alpha=0.3)
-
-    # Add correlation values on bars
-    for i, (bar, val) in enumerate(zip(bars, target_corr.values)):
-        ax2.text(
-            val + (0.01 if val >= 0 else -0.01),
-            i,
-            f"{val:.3f}",
-            va="center",
-            ha="left" if val >= 0 else "right",
-            fontsize=8,
-        )
-
+    plt.title(title, fontsize=14, pad=20)
     plt.tight_layout()
     show_or_save_plot("correlation_matrix.png")
 
-    # Print top correlations
-    print("\nTop 10 Features Correlated with Flight Delays:")
-    print("=" * 50)
-    for feature, corr_val in target_corr.head(10).items():
-        direction = "↑" if corr_val > 0 else "↓"
-        print(f"{feature:25s} {direction} {corr_val:6.3f}")
-
-    print("\nCorrelation Summary:")
+    target_corr = corr_matrix["target"].drop("target").sort_values(ascending=False)
     print(
-        f"Strongest positive correlation: {target_corr.max():.3f} ({target_corr.idxmax()})"
+        f"\nHighest positive correlation with target: {target_corr.idxmax()} ({target_corr.max():.3f})"
     )
     print(
-        f"Strongest negative correlation: {target_corr.min():.3f} ({target_corr.idxmin()})"
+        f"Highest negative correlation with target: {target_corr.idxmin()} ({target_corr.idxmin()})"
     )
 
     return corr_matrix
@@ -535,45 +496,49 @@ print("Top 10 most important features:")
 print(feature_importance_df.head(10))
 
 # %%
-model_dir = f"{data_dir}/model"
-os.makedirs(model_dir, exist_ok=True)
-
-torch.save(
-    {
-        "model_state_dict": model.state_dict(),
-        "model_architecture": {
-            "input_dim": input_dim,
-            "hidden_dims": [128, 64, 32],
-            "dropout_rate": 0.3,
-        },
-        "feature_columns": feature_columns,
-        "training_stats": {
-            "train_r2": train_r2,
-            "test_r2": test_r2,
-            "train_mae": train_mae,
-            "test_mae": test_mae,
-        },
+model_checkpoint = {
+    "model_state_dict": model.state_dict(),
+    "model_architecture": {
+        "input_dim": input_dim,
+        "hidden_dims": [128, 64, 32],
+        "dropout_rate": 0.3,
     },
-    f"{model_dir}/pytorch_flight_delay_model.pth",
-)
+    "feature_columns": feature_columns,
+    "training_stats": {
+        "train_r2": train_r2,
+        "test_r2": test_r2,
+        "train_mae": train_mae,
+        "test_mae": test_mae,
+    },
+}
 
-joblib.dump(scaler, f"{model_dir}/feature_scaler.pkl")
-joblib.dump(le_origin, f"{model_dir}/origin_encoder.pkl")
-joblib.dump(le_dest, f"{model_dir}/dest_encoder.pkl")
-joblib.dump(imputer, f"{model_dir}/feature_imputer.pkl")
+buf = io.BytesIO()
+torch.save(model_checkpoint, buf)
+buf.seek(0)
+storage.s3.upload_fileobj(buf, config.bucket_name, f"{config.results_path}/model/pytorch_flight_delay_model.pth")
 
-print(f"\nModel saved to {model_dir}/")
+for name, obj in [
+    ("feature_scaler.pkl", scaler),
+    ("origin_encoder.pkl", le_origin),
+    ("dest_encoder.pkl", le_dest),
+    ("feature_imputer.pkl", imputer)
+]:
+    buf = io.BytesIO()
+    joblib.dump(obj, buf)
+    buf.seek(0)
+    storage.s3.upload_fileobj(buf, config.bucket_name, f"{config.results_path}/model/{name}")
+
+print(f"\nModel saved to s3://{config.bucket_name}/{config.results_path}/model/")
 
 
 # %%
-def predict_flight_delay(origin, dest, weather_data, model_data_dir=None):
-    if model_data_dir is None:
-        model_data_dir = data_dir
-
-    model_dir = f"{model_data_dir}/model"
-    checkpoint = torch.load(
-        f"{model_dir}/pytorch_flight_delay_model.pth", map_location=device
-    )
+def predict_flight_delay(origin, dest, weather_data):
+    predict_storage = Storage()
+    
+    buf = io.BytesIO()
+    predict_storage.s3.download_fileobj(config.bucket_name, f"{config.results_path}/model/pytorch_flight_delay_model.pth", buf)
+    buf.seek(0)
+    checkpoint = torch.load(buf, map_location=device)
 
     model_arch = checkpoint["model_architecture"]
     loaded_model = FlightDelayPredictor(
@@ -582,10 +547,17 @@ def predict_flight_delay(origin, dest, weather_data, model_data_dir=None):
     loaded_model.load_state_dict(checkpoint["model_state_dict"])
     loaded_model.eval()
 
-    scaler = joblib.load(f"{model_dir}/feature_scaler.pkl")
-    le_origin = joblib.load(f"{model_dir}/origin_encoder.pkl")
-    le_dest = joblib.load(f"{model_dir}/dest_encoder.pkl")
-    imputer = joblib.load(f"{model_dir}/feature_imputer.pkl")
+    artifacts = {}
+    for name in ["feature_scaler.pkl", "origin_encoder.pkl", "dest_encoder.pkl", "feature_imputer.pkl"]:
+        buf = io.BytesIO()
+        predict_storage.s3.download_fileobj(config.bucket_name, f"{config.results_path}/model/{name}", buf)
+        buf.seek(0)
+        artifacts[name] = joblib.load(buf)
+
+    scaler = artifacts["feature_scaler.pkl"]
+    le_origin = artifacts["origin_encoder.pkl"]
+    le_dest = artifacts["dest_encoder.pkl"]
+    imputer = artifacts["feature_imputer.pkl"]
 
     input_data = weather_data.copy()
 
