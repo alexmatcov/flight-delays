@@ -37,14 +37,14 @@ uv run storage.py
 uv run upload_raw_data.py
 
 # Download MinIO data locally
-uv run donwload_data.py
+uv run download_data.py
 ```
 
-MinIO console: http://localhost:9001 (user: admin / passwrod: very-intensive-data)
+MinIO console: http://localhost:9001 (user: admin / password: very-intensive-data)
 
 ## Processing
 
-`analyze.py` processed data from MinIO and creates a merged dataset from it that could be well suited for training an ML model,
+`analyze.py` processes data from MinIO and creates a merged dataset from it that could be well suited for training an ML model,
 particularly to predict flight delays based on weather readings.
 
 Run it with:
